@@ -2,10 +2,10 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "FX Desk — Forex signals and order blocks",
+  title: "FX Desk — Live charts and signal strength",
   description:
-    "Live forex prices with composite signal strength and automatically "
-    + "detected order blocks. A demonstration project, not trading advice.",
+    "Live TradingView charts for forex, gold and crypto, with a composite "
+    + "signal-strength score. A demonstration project, not trading advice.",
 };
 
 export default function RootLayout({
@@ -21,7 +21,7 @@ export default function RootLayout({
                 FX<span className="text-accent">.</span>Desk
               </span>
               <span className="hidden text-xs text-faint sm:inline">
-                Signals &amp; order blocks
+                Live charts &amp; signals
               </span>
             </div>
             <p className="rounded border border-line px-2.5 py-1 font-mono text-[10px] text-faint">
@@ -36,23 +36,22 @@ export default function RootLayout({
           <div className="mx-auto max-w-7xl space-y-2 px-4 py-6 text-[11px] leading-relaxed text-faint">
             <p>
               <strong className="text-muted">Not financial advice.</strong>{" "}
-              Everything here is computed from public end-of-day exchange rates
-              for demonstration purposes. Signal scores are arithmetic on past
-              prices — they do not predict anything, and order blocks are a
-              charting convention, not a fact about the market. Do not trade
-              from this.
+              Signal scores are arithmetic on past prices and predict nothing.
+              This is a demonstration of data fetching and algorithm design, not
+              a trading system. Do not trade from it.
             </p>
             <p>
-              Prices from{" "}
+              Charts and chart prices by{" "}
               <a
-                href="https://docs.awesomeapi.com.br/api-de-moedas"
+                href="https://www.tradingview.com/"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-muted underline underline-offset-2 hover:text-accent"
               >
-                AwesomeAPI
+                TradingView
               </a>
-              , daily candles, refreshed every 20 seconds. Built with Next.js.
+              . Signal analysis computed from Twelve Data, Binance and ECB
+              reference rates. Built with Next.js.
             </p>
           </div>
         </footer>
