@@ -275,6 +275,7 @@ export function Dashboard() {
                 showBlocks={showBlocks}
               />
               <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1 border-t border-line pt-3 font-mono text-[11px] text-faint">
+                <li className="text-muted">{analysis.sourceLabel}</li>
                 <li>
                   <span className="mr-1.5 inline-block h-0.5 w-3 align-middle bg-[var(--ema-fast)]" />
                   EMA 9

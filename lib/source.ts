@@ -1,5 +1,6 @@
 import type { Candle, Quote } from "./types";
 import { pairs, type PairDef } from "./pairs";
+import { fetchCandlesFallback, fetchQuotesFallback } from "./frankfurter";
 
 /**
  * Every outbound request lives here and runs on the server.
@@ -146,6 +147,51 @@ export async function fetchQuotes(): Promise<Quote[]> {
 
 export function errorStatus(err: unknown): number {
   return err instanceof UpstreamError ? err.status : 502;
+}
+
+export type DataSource = "awesomeapi" | "ecb";
+
+export const SOURCE_LABEL: Record<DataSource, string> = {
+  awesomeapi: "AwesomeAPI · full OHLC",
+  ecb: "ECB reference rates · daily close only",
+};
+
+/**
+ * Primary source first, ECB second.
+ *
+ * AwesomeAPI gives true OHLC but refuses shared cloud IPs, which is where
+ * production runs — so locally you get the better data and in production you
+ * get the data that actually arrives. Whichever answered is reported back so
+ * the UI can say which one is on screen.
+ */
+export async function loadCandles(
+  pair: PairDef,
+  limit = 200,
+): Promise<{ candles: Candle[]; source: DataSource }> {
+  try {
+    return { candles: await fetchCandles(pair, limit), source: "awesomeapi" };
+  } catch (primary) {
+    try {
+      return { candles: await fetchCandlesFallback(pair), source: "ecb" };
+    } catch {
+      throw primary;
+    }
+  }
+}
+
+export async function loadQuotes(): Promise<{
+  quotes: Quote[];
+  source: DataSource;
+}> {
+  try {
+    return { quotes: await fetchQuotes(), source: "awesomeapi" };
+  } catch (primary) {
+    try {
+      return { quotes: await fetchQuotesFallback(), source: "ecb" };
+    } catch {
+      throw primary;
+    }
+  }
 }
 
 function clampInside(v: number, low: number, high: number): number {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getPair } from "@/lib/pairs";
-import { errorStatus, fetchCandles } from "@/lib/source";
+import { errorStatus, loadCandles, SOURCE_LABEL } from "@/lib/source";
 import { atr, ema, rsi } from "@/lib/indicators";
 import { computeSignal } from "@/lib/signal";
 import { findOrderBlocks } from "@/lib/orderBlocks";
@@ -20,7 +20,7 @@ export async function GET(
   }
 
   try {
-    const candles = await fetchCandles(pair, 200);
+    const { candles, source } = await loadCandles(pair, 200);
     const closes = candles.map((c) => c.close);
 
     const analysis: PairAnalysis = {
@@ -36,6 +36,8 @@ export async function GET(
         atr14: atr(candles, 14),
       },
       lastClose: closes[closes.length - 1],
+      source,
+      sourceLabel: SOURCE_LABEL[source],
       generatedAt: new Date().toISOString(),
     };
 

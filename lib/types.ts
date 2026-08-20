@@ -63,6 +63,9 @@ export type PairAnalysis = {
     atr14: number;
   };
   lastClose: number;
+  /** Which provider answered — the UI names it on screen. */
+  source: "awesomeapi" | "ecb";
+  sourceLabel: string;
   /** ISO string of when this analysis was produced. */
   generatedAt: string;
 };
