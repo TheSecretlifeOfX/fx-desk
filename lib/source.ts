@@ -1,6 +1,7 @@
 import type { Candle, Quote } from "./types";
 import { pairs, type PairDef } from "./pairs";
 import { fetchCandlesFallback, fetchQuotesFallback } from "./frankfurter";
+import { fetchIntraday, type Timeframe } from "./twelvedata";
 
 /**
  * Every outbound request lives here and runs on the server.
@@ -149,11 +150,12 @@ export function errorStatus(err: unknown): number {
   return err instanceof UpstreamError ? err.status : 502;
 }
 
-export type DataSource = "awesomeapi" | "ecb";
+export type DataSource = "twelvedata" | "awesomeapi" | "ecb";
 
 export const SOURCE_LABEL: Record<DataSource, string> = {
-  awesomeapi: "AwesomeAPI · full OHLC",
-  ecb: "ECB reference rates · daily close only",
+  twelvedata: "Twelve Data · intraday OHLC",
+  awesomeapi: "AwesomeAPI · daily OHLC",
+  ecb: "ECB reference rates · daily close, no wicks",
 };
 
 /**
@@ -166,8 +168,21 @@ export const SOURCE_LABEL: Record<DataSource, string> = {
  */
 export async function loadCandles(
   pair: PairDef,
+  timeframe: Timeframe = "1h",
   limit = 200,
 ): Promise<{ candles: Candle[]; source: DataSource }> {
+  // Twelve Data first: it's the only source tested that serves intraday OHLC
+  // to shared cloud IPs. The two below are daily-only and exist so the chart
+  // still draws when it's unavailable or the symbol isn't covered.
+  try {
+    return {
+      candles: await fetchIntraday(pair, timeframe, 500),
+      source: "twelvedata",
+    };
+  } catch {
+    // fall through
+  }
+
   try {
     return { candles: await fetchCandles(pair, limit), source: "awesomeapi" };
   } catch (primary) {

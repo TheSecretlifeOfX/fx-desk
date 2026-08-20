@@ -1,19 +1,32 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useRef } from "react";
+import {
+  CandlestickSeries,
+  ColorType,
+  CrosshairMode,
+  LineSeries,
+  LineStyle,
+  createChart,
+  type IChartApi,
+  type ISeriesApi,
+  type Time,
+  type UTCTimestamp,
+} from "lightweight-charts";
 import type { Candle, OrderBlock } from "@/lib/types";
-
-const W = 1000;
-const H = 460;
-const PAD = { top: 16, right: 66, bottom: 28, left: 10 };
+import { OrderBlockPrimitive } from "./OrderBlockPrimitive";
 
 /**
- * Candlestick chart drawn as plain SVG — no charting library.
+ * Interactive candlestick chart built on TradingView's Lightweight Charts.
  *
- * Everything is projected through two scale functions, so the same code
- * handles EURUSD at 1.16 and gold at 3,900 without special cases. Order
- * blocks are drawn as horizontal zones behind the candles, extended to the
- * right edge because a zone matters until price reaches it.
+ * Scroll to zoom, drag to pan, and the order block zones stay pinned to their
+ * prices throughout because they're drawn by a series primitive that
+ * re-projects them every frame rather than being baked into the image.
+ *
+ * The chart instance is created once and then fed via imperative handles;
+ * React never re-renders it. Data changes go through setData, live prices go
+ * through update, which is the difference between a chart that ticks smoothly
+ * and one that rebuilds itself twice a minute.
  */
 export function Chart({
   candles,
@@ -22,6 +35,7 @@ export function Chart({
   ema21,
   digits,
   showBlocks,
+  livePrice,
 }: {
   candles: Candle[];
   orderBlocks: OrderBlock[];
@@ -29,229 +43,179 @@ export function Chart({
   ema21: (number | null)[];
   digits: number;
   showBlocks: boolean;
+  livePrice?: number;
 }) {
-  const [hover, setHover] = useState<number | null>(null);
+  const holder = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const fastRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const slowRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const blocksRef = useRef<OrderBlockPrimitive | null>(null);
 
-  const view = useMemo(() => {
-    const lows = candles.map((c) => c.low);
-    const highs = candles.map((c) => c.high);
+  // ── Create once ───────────────────────────────────────────────────
+  useEffect(() => {
+    const el = holder.current;
+    if (!el) return;
 
-    let min = Math.min(...lows);
-    let max = Math.max(...highs);
+    const css = getComputedStyle(document.documentElement);
+    const v = (name: string, fallback: string) =>
+      css.getPropertyValue(name).trim() || fallback;
 
-    // Zones can sit outside the price range; keep them on screen.
-    if (showBlocks) {
-      for (const b of orderBlocks) {
-        min = Math.min(min, b.bottom);
-        max = Math.max(max, b.top);
-      }
-    }
+    const up = v("--up", "#26a96a");
+    const down = v("--down", "#e05260");
 
-    const span = max - min || 1;
-    min -= span * 0.06;
-    max += span * 0.06;
+    const chart = createChart(el, {
+      layout: {
+        background: { type: ColorType.Solid, color: "transparent" },
+        textColor: v("--muted", "#8b94a7"),
+        fontFamily:
+          "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+        attributionLogo: false,
+      },
+      grid: {
+        vertLines: { color: v("--grid", "#1b212c") },
+        horzLines: { color: v("--grid", "#1b212c") },
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: { color: v("--axis", "#6b7488"), style: LineStyle.Dashed, labelBackgroundColor: v("--panel-2", "#171c26") },
+        horzLine: { color: v("--axis", "#6b7488"), style: LineStyle.Dashed, labelBackgroundColor: v("--panel-2", "#171c26") },
+      },
+      rightPriceScale: {
+        borderColor: v("--line", "#232a37"),
+        scaleMargins: { top: 0.12, bottom: 0.12 },
+      },
+      timeScale: {
+        borderColor: v("--line", "#232a37"),
+        timeVisible: true,
+        secondsVisible: false,
+        rightOffset: 6,
+      },
+      // Everything that makes it feel like a real chart.
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: false,
+      },
+      handleScale: {
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: true,
+      },
+      autoSize: true,
+    });
 
-    const plotW = W - PAD.left - PAD.right;
-    const plotH = H - PAD.top - PAD.bottom;
-    const step = plotW / candles.length;
+    const candleSeries = chart.addSeries(CandlestickSeries, {
+      upColor: up,
+      downColor: down,
+      borderUpColor: up,
+      borderDownColor: down,
+      wickUpColor: up,
+      wickDownColor: down,
+      priceFormat: { type: "price", precision: digits, minMove: 10 ** -digits },
+    });
 
-    const x = (i: number) => PAD.left + i * step + step / 2;
-    const y = (p: number) =>
-      PAD.top + plotH - ((p - min) / (max - min)) * plotH;
+    const slow = chart.addSeries(LineSeries, {
+      color: v("--ema-slow", "#8b5cf6"),
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
 
-    return { x, y, step, min, max, plotH };
-  }, [candles, orderBlocks, showBlocks]);
+    const fast = chart.addSeries(LineSeries, {
+      color: v("--ema-fast", "#f0b429"),
+      lineWidth: 1,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
 
-  const bodyW = Math.max(1.2, view.step * 0.62);
-  const active = hover !== null ? candles[hover] : candles[candles.length - 1];
+    const primitive = new OrderBlockPrimitive({ bull: up, bear: down });
+    candleSeries.attachPrimitive(primitive);
 
-  const gridLines = useMemo(() => {
-    const out: { p: number; y: number }[] = [];
-    for (let i = 0; i <= 5; i++) {
-      const p = view.min + ((view.max - view.min) * i) / 5;
-      out.push({ p, y: view.y(p) });
-    }
-    return out;
-  }, [view]);
+    chartRef.current = chart;
+    candleRef.current = candleSeries;
+    fastRef.current = fast;
+    slowRef.current = slow;
+    blocksRef.current = primitive;
+
+    return () => {
+      chart.remove();
+      chartRef.current = null;
+      candleRef.current = null;
+      fastRef.current = null;
+      slowRef.current = null;
+      blocksRef.current = null;
+    };
+  }, [digits]);
+
+  // ── Feed data ─────────────────────────────────────────────────────
+  useEffect(() => {
+    const candleSeries = candleRef.current;
+    const fast = fastRef.current;
+    const slow = slowRef.current;
+    const primitive = blocksRef.current;
+    const chart = chartRef.current;
+    if (!candleSeries || !fast || !slow || !primitive || !chart) return;
+    if (candles.length === 0) return;
+
+    const times: Time[] = candles.map((c) => c.time as UTCTimestamp);
+
+    candleSeries.setData(
+      candles.map((c) => ({
+        time: c.time as UTCTimestamp,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      })),
+    );
+
+    fast.setData(line(candles, ema9));
+    slow.setData(line(candles, ema21));
+    primitive.setData(orderBlocks, times);
+
+    chart.timeScale().fitContent();
+  }, [candles, ema9, ema21, orderBlocks]);
+
+  // ── Toggle zones without touching the data ────────────────────────
+  useEffect(() => {
+    blocksRef.current?.setEnabled(showBlocks);
+  }, [showBlocks]);
+
+  // ── Live price folds into the last candle ─────────────────────────
+  useEffect(() => {
+    const series = candleRef.current;
+    if (!series || livePrice === undefined || candles.length === 0) return;
+
+    const last = candles[candles.length - 1];
+    series.update({
+      time: last.time as UTCTimestamp,
+      open: last.open,
+      high: Math.max(last.high, livePrice),
+      low: Math.min(last.low, livePrice),
+      close: livePrice,
+    });
+  }, [livePrice, candles]);
 
   return (
-    <div className="relative">
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        className="w-full touch-none"
-        role="img"
-        aria-label={`Daily candlestick chart with ${orderBlocks.length} order blocks`}
-        onMouseLeave={() => setHover(null)}
-        onMouseMove={(e) => {
-          const rect = e.currentTarget.getBoundingClientRect();
-          const px = ((e.clientX - rect.left) / rect.width) * W;
-          const i = Math.floor((px - PAD.left) / view.step);
-          setHover(i >= 0 && i < candles.length ? i : null);
-        }}
-      >
-        {gridLines.map((g) => (
-          <g key={g.p}>
-            <line
-              x1={PAD.left}
-              x2={W - PAD.right}
-              y1={g.y}
-              y2={g.y}
-              stroke="var(--grid)"
-              strokeWidth="1"
-            />
-            <text
-              x={W - PAD.right + 6}
-              y={g.y + 3.5}
-              className="fill-[var(--axis)] font-mono"
-              fontSize="10.5"
-            >
-              {g.p.toFixed(digits)}
-            </text>
-          </g>
-        ))}
-
-        {showBlocks &&
-          orderBlocks.map((b) => {
-            const top = view.y(b.top);
-            const bottom = view.y(b.bottom);
-            const colour = b.kind === "bullish" ? "var(--up)" : "var(--down)";
-            return (
-              <g key={`${b.kind}-${b.index}`}>
-                <rect
-                  x={view.x(b.index) - bodyW / 2}
-                  y={top}
-                  width={W - PAD.right - (view.x(b.index) - bodyW / 2)}
-                  height={Math.max(1.5, bottom - top)}
-                  fill={colour}
-                  opacity={b.mitigated ? 0.07 : 0.16}
-                />
-                <line
-                  x1={view.x(b.index) - bodyW / 2}
-                  x2={W - PAD.right}
-                  y1={top}
-                  y2={top}
-                  stroke={colour}
-                  strokeWidth="1"
-                  strokeDasharray={b.mitigated ? "3 3" : undefined}
-                  opacity={b.mitigated ? 0.45 : 0.9}
-                />
-                <line
-                  x1={view.x(b.index) - bodyW / 2}
-                  x2={W - PAD.right}
-                  y1={bottom}
-                  y2={bottom}
-                  stroke={colour}
-                  strokeWidth="1"
-                  strokeDasharray={b.mitigated ? "3 3" : undefined}
-                  opacity={b.mitigated ? 0.45 : 0.9}
-                />
-              </g>
-            );
-          })}
-
-        <Line points={ema21} view={view} stroke="var(--ema-slow)" />
-        <Line points={ema9} view={view} stroke="var(--ema-fast)" />
-
-        {candles.map((c, i) => {
-          const up = c.close >= c.open;
-          const colour = up ? "var(--up)" : "var(--down)";
-          const yOpen = view.y(c.open);
-          const yClose = view.y(c.close);
-          return (
-            <g key={c.time} opacity={hover === null || hover === i ? 1 : 0.75}>
-              <line
-                x1={view.x(i)}
-                x2={view.x(i)}
-                y1={view.y(c.high)}
-                y2={view.y(c.low)}
-                stroke={colour}
-                strokeWidth="1"
-              />
-              <rect
-                x={view.x(i) - bodyW / 2}
-                y={Math.min(yOpen, yClose)}
-                width={bodyW}
-                height={Math.max(1, Math.abs(yClose - yOpen))}
-                fill={colour}
-              />
-            </g>
-          );
-        })}
-
-        {hover !== null && (
-          <line
-            x1={view.x(hover)}
-            x2={view.x(hover)}
-            y1={PAD.top}
-            y2={H - PAD.bottom}
-            stroke="var(--axis)"
-            strokeWidth="1"
-            strokeDasharray="3 3"
-            opacity="0.6"
-          />
-        )}
-
-        <line
-          x1={PAD.left}
-          x2={W - PAD.right}
-          y1={view.y(candles[candles.length - 1].close)}
-          y2={view.y(candles[candles.length - 1].close)}
-          stroke="var(--accent)"
-          strokeWidth="1"
-          strokeDasharray="4 3"
-        />
-      </svg>
-
-      <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 font-mono text-[11px] text-[var(--muted)]">
-        <span>
-          {new Date(active.time * 1000).toLocaleDateString("en-GB", {
-            day: "2-digit",
-            month: "short",
-            year: "numeric",
-            timeZone: "UTC",
-          })}
-        </span>
-        <span>O {active.open.toFixed(digits)}</span>
-        <span>H {active.high.toFixed(digits)}</span>
-        <span>L {active.low.toFixed(digits)}</span>
-        <span
-          className={
-            active.close >= active.open
-              ? "text-[var(--up)]"
-              : "text-[var(--down)]"
-          }
-        >
-          C {active.close.toFixed(digits)}
-        </span>
-      </div>
-    </div>
+    <div
+      ref={holder}
+      className="h-[440px] w-full"
+      role="img"
+      aria-label={`Interactive candlestick chart with ${orderBlocks.length} order blocks. Scroll to zoom, drag to pan.`}
+    />
   );
 }
 
-function Line({
-  points,
-  view,
-  stroke,
-}: {
-  points: (number | null)[];
-  view: { x: (i: number) => number; y: (p: number) => number };
-  stroke: string;
-}) {
-  const d = points
-    .map((p, i) =>
-      p === null ? null : `${view.x(i).toFixed(1)},${view.y(p).toFixed(1)}`,
-    )
-    .filter(Boolean)
-    .join(" L ");
-
-  if (!d) return null;
-  return (
-    <path
-      d={`M ${d}`}
-      fill="none"
-      stroke={stroke}
-      strokeWidth="1.3"
-      opacity="0.85"
-    />
-  );
+function line(candles: Candle[], values: (number | null)[]) {
+  const out: { time: UTCTimestamp; value: number }[] = [];
+  for (let i = 0; i < candles.length; i++) {
+    const v = values[i];
+    if (v === null || v === undefined) continue;
+    out.push({ time: candles[i].time as UTCTimestamp, value: v });
+  }
+  return out;
 }

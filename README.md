@@ -1,6 +1,6 @@
 # FX Desk
 
-**Live demo → [fx-desk.vercel.app](https://fx-desk.vercel.app)**
+**Live demo → [fx-desk-live.vercel.app](https://fx-desk-live.vercel.app)**
 
 Forex prices with a composite signal-strength score and automatically detected
 order blocks drawn on the chart. Built with Next.js 15, TypeScript and
@@ -23,23 +23,50 @@ Then open http://localhost:3002.
 ## What it does
 
 - **11 instruments** — 7 majors, 3 crosses, and gold
-- **Live prices**, polled every 20 seconds
+- **Interactive chart** — scroll to zoom, drag to pan, pinch on touch
+- **Five timeframes** — 5m, 15m, 1H, 4H, 1D
+- **Live prices**, polled every 20 seconds and folded into the forming candle
 - **Signal strength** from −100 to +100, with a separate confidence figure
-- **Order block detection** drawn as zones on the chart
-- **Candlestick chart** with EMA 9/21 overlays and a hover crosshair
+- **Order blocks** drawn as real zones that stay pinned to their prices while
+  you scroll and zoom
 
 ## Data
 
-Prices come from [AwesomeAPI](https://docs.awesomeapi.com.br/api-de-moedas),
-which needs no key. Candles are **end-of-day**, and the live quote refreshes
-every 20 seconds — so the price ticks in real time while the chart itself is
-daily. The upstream caps intraday history at roughly 100 quotes (~1.3 hours),
-which isn't enough for the analysis, hence daily.
+Three providers, tried in order, because no single free source is reliable
+from a serverless platform:
 
-The API returns high, low, close and the day's change but no explicit open.
-Open is recovered as `close − change`; the derived value falls inside the
-session's high/low on every candle tested, and the route handler clamps it
-regardless.
+| Provider | Data | Notes |
+| --- | --- | --- |
+| **Twelve Data** | Intraday OHLC, all timeframes | Primary. Needs a key for full coverage |
+| **AwesomeAPI** | Daily OHLC | Refuses shared cloud IPs — works locally, not in production |
+| **ECB** (Frankfurter) | Daily close only | Last resort. No wicks, no gold |
+
+Whichever answered is **named in the UI**, because a chart that silently
+changes fidelity is worse than one that tells you what you're looking at.
+
+### API key
+
+Without one, Twelve Data's public `demo` key is used, which covers only a
+couple of symbols; everything else falls through to the daily providers. A
+[free Twelve Data key](https://twelvedata.com/pricing) (800 requests/day)
+unlocks intraday on all pairs:
+
+```bash
+# .env.local, or a Vercel environment variable
+TWELVEDATA_API_KEY=your_key_here
+```
+
+The key is read on the server and never reaches the browser.
+
+### On TradingView
+
+The chart is built with **[Lightweight Charts](https://github.com/tradingview/lightweight-charts)**,
+TradingView's open-source charting library (Apache-2.0). The *data* is not
+TradingView's: they have no public data API, their feed is exchange-licensed,
+and scraping it would breach their terms. Their embeddable widget does carry
+real TradingView data, but it's an iframe — custom order blocks can't be drawn
+on it. Since drawing the zones was the point, this uses their renderer with
+independent data.
 
 ## How the signal works
 
@@ -91,29 +118,39 @@ app/
   page.tsx                    dashboard
 components/
   Dashboard.tsx               state, polling, selection
-  Chart.tsx                   SVG candlesticks, EMAs, order block zones
+  Chart.tsx                   Lightweight Charts setup, live updates
+  OrderBlockPrimitive.ts      custom canvas primitive drawing the zones
   SignalGauge.tsx             score bar and component breakdown
 lib/
-  source.ts                   every outbound request lives here
+  source.ts                   provider chain and failover
+  twelvedata.ts               intraday OHLC (primary)
+  frankfurter.ts              ECB reference rates (fallback)
   indicators.ts               EMA, Wilder's RSI, ATR, momentum
   signal.ts                   composite scoring
   orderBlocks.ts              detection
   pairs.ts                    instrument definitions
 ```
 
-**All fetching is server-side.** The upstream needs no key, but routing through
-route handlers still means the browser never talks to a third party, responses
-are cached on our terms (30s for quotes, 15min for candles), and the shape the
-client sees is ours — so swapping providers touches `lib/source.ts` and
-nothing else.
+**All fetching is server-side.** The browser never talks to a third party, the
+API key stays on the server, responses are cached on our terms, and the shape
+the client sees is ours — which is why adding a third provider touched one
+file.
 
-**The chart is hand-drawn SVG**, no charting library. Everything projects
-through two scale functions, so the same code renders EURUSD at 1.16 and gold
-at 4,100 without special cases.
+**Order blocks are a chart primitive, not an overlay.** Lightweight Charts has
+no rectangle shape, so `components/OrderBlockPrimitive.ts` implements its
+series-primitive interface: every frame, each zone's price range and origin
+time are re-projected into pixels through the chart's own scales. That's why
+the zones stay locked to their prices while you scroll and zoom, instead of
+drifting the way a static overlay would.
+
+**The chart instance is created once** and driven imperatively — `setData` for
+history, `update` for live ticks. React never re-renders it, which is the
+difference between a chart that ticks smoothly and one that rebuilds itself
+twice a minute.
 
 ## Known limitations
 
-- Daily candles only — intraday history isn't available from this source
+- Intraday needs a Twelve Data key; without one most pairs fall back to daily
 - No backtesting; the signal is a snapshot, never validated against outcomes
 - No alerts, accounts or persistence
 - Upstream rate limits surface as an error state rather than a retry queue

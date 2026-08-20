@@ -64,7 +64,8 @@ export type PairAnalysis = {
   };
   lastClose: number;
   /** Which provider answered — the UI names it on screen. */
-  source: "awesomeapi" | "ecb";
+  source: "twelvedata" | "awesomeapi" | "ecb";
+  timeframe: string;
   sourceLabel: string;
   /** ISO string of when this analysis was produced. */
   generatedAt: string;

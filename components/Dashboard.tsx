@@ -6,6 +6,7 @@ import type { PairAnalysis, Quote } from "@/lib/types";
 import { Chart } from "./Chart";
 import { SignalBar, SignalPanel, biasColour } from "./SignalGauge";
 import { BIAS_LABEL } from "@/lib/signal";
+import { TIMEFRAMES, TIMEFRAME_LABEL, type Timeframe } from "@/lib/twelvedata";
 
 const QUOTE_REFRESH_MS = 20_000;
 
@@ -18,6 +19,7 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [showBlocks, setShowBlocks] = useState(true);
+  const [timeframe, setTimeframe] = useState<Timeframe>("1h");
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 
   const previous = useRef<Record<string, number>>({});
@@ -57,7 +59,7 @@ export function Dashboard() {
     setLoading(true);
     setError(null);
 
-    fetch(`/api/candles/${selected}`)
+    fetch(`/api/candles/${selected}?tf=${timeframe}`)
       .then(async (res) => {
         const body = await res.json();
         if (!res.ok) throw new Error(body.error ?? "Could not load chart");
@@ -78,7 +80,7 @@ export function Dashboard() {
     return () => {
       cancelled = true;
     };
-  }, [selected]);
+  }, [selected, timeframe]);
 
   // Fill in the watchlist's signal column in the background, one pair at a
   // time so we don't fire eleven requests at the upstream simultaneously.
@@ -233,6 +235,24 @@ export function Dashboard() {
                 </div>
               )}
 
+              <div className="flex overflow-hidden rounded border border-line" role="group" aria-label="Timeframe">
+                {TIMEFRAMES.map((tf) => (
+                  <button
+                    key={tf}
+                    type="button"
+                    onClick={() => setTimeframe(tf)}
+                    aria-pressed={timeframe === tf}
+                    className={`px-2.5 py-1.5 font-mono text-xs transition-colors ${
+                      timeframe === tf
+                        ? "bg-accent text-[#0b0e13]"
+                        : "text-muted hover:bg-panel-2"
+                    }`}
+                  >
+                    {TIMEFRAME_LABEL[tf]}
+                  </button>
+                ))}
+              </div>
+
               <label className="flex cursor-pointer items-center gap-2 rounded border border-line px-3 py-1.5 text-xs">
                 <input
                   type="checkbox"
@@ -273,9 +293,11 @@ export function Dashboard() {
                 ema21={analysis.indicators.ema21}
                 digits={pairDef?.digits ?? 5}
                 showBlocks={showBlocks}
+                livePrice={quote?.bid}
               />
               <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1 border-t border-line pt-3 font-mono text-[11px] text-faint">
                 <li className="text-muted">{analysis.sourceLabel}</li>
+                <li>scroll to zoom · drag to pan</li>
                 <li>
                   <span className="mr-1.5 inline-block h-0.5 w-3 align-middle bg-[var(--ema-fast)]" />
                   EMA 9
