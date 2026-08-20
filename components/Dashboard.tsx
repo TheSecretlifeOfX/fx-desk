@@ -7,6 +7,7 @@ import { Chart } from "./Chart";
 import { SignalBar, SignalPanel, biasColour } from "./SignalGauge";
 import { BIAS_LABEL } from "@/lib/signal";
 import { TIMEFRAMES, TIMEFRAME_LABEL, type Timeframe } from "@/lib/twelvedata";
+import { useLiveFeed, type LiveBar, type FeedStatus } from "./useLiveFeed";
 
 const QUOTE_REFRESH_MS = 20_000;
 
@@ -114,6 +115,21 @@ export function Dashboard() {
   const pairDef = getPair(selected);
   const quote = quotes[selected];
 
+  // The forming candle starts as a copy of the last closed one, then the feed
+  // takes over and mutates it on every tick.
+  const seed: LiveBar | null = analysis?.candles.length
+    ? { ...analysis.candles[analysis.candles.length - 1] }
+    : null;
+
+  const { bar: liveBar, status: feedStatus, lastTick } = useLiveFeed(
+    pairDef,
+    timeframe,
+    seed,
+  );
+
+  // Streaming instruments carry no REST quote; take the price off the tick.
+  const livePrice = liveBar?.close ?? quote?.bid;
+
   return (
     <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
       {/* ── Watchlist ─────────────────────────────────────────────── */}
@@ -215,25 +231,47 @@ export function Dashboard() {
             </div>
 
             <div className="flex items-center gap-4">
-              {quote && (
+              {livePrice !== undefined && (
                 <div className="text-right">
                   <p className="font-mono text-xl tabular-nums">
-                    {quote.bid.toFixed(pairDef?.digits ?? 5)}
+                    {livePrice.toFixed(pairDef?.digits ?? 5)}
                   </p>
-                  <p
-                    className="font-mono text-xs tabular-nums"
-                    style={{
-                      color:
-                        quote.changePercent >= 0 ? "var(--up)" : "var(--down)",
-                    }}
-                  >
-                    {quote.changePercent >= 0 ? "+" : ""}
-                    {quote.change.toFixed(pairDef?.digits ?? 5)} (
-                    {quote.changePercent >= 0 ? "+" : ""}
-                    {quote.changePercent.toFixed(2)}%)
-                  </p>
+                  {liveBar ? (
+                    <p
+                      className="font-mono text-xs tabular-nums"
+                      style={{
+                        color:
+                          liveBar.close >= liveBar.open
+                            ? "var(--up)"
+                            : "var(--down)",
+                      }}
+                    >
+                      {liveBar.close >= liveBar.open ? "+" : ""}
+                      {(liveBar.close - liveBar.open).toFixed(
+                        pairDef?.digits ?? 5,
+                      )}{" "}
+                      this candle
+                    </p>
+                  ) : (
+                    quote && (
+                      <p
+                        className="font-mono text-xs tabular-nums"
+                        style={{
+                          color:
+                            quote.changePercent >= 0
+                              ? "var(--up)"
+                              : "var(--down)",
+                        }}
+                      >
+                        {quote.changePercent >= 0 ? "+" : ""}
+                        {quote.changePercent.toFixed(2)}%
+                      </p>
+                    )
+                  )}
                 </div>
               )}
+
+              <LiveBadge status={feedStatus} lastTick={lastTick} />
 
               <div className="flex overflow-hidden rounded border border-line" role="group" aria-label="Timeframe">
                 {TIMEFRAMES.map((tf) => (
@@ -293,7 +331,7 @@ export function Dashboard() {
                 ema21={analysis.indicators.ema21}
                 digits={pairDef?.digits ?? 5}
                 showBlocks={showBlocks}
-                livePrice={quote?.bid}
+                liveBar={liveBar}
               />
               <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1 border-t border-line pt-3 font-mono text-[11px] text-faint">
                 <li className="text-muted">{analysis.sourceLabel}</li>
@@ -387,5 +425,54 @@ export function Dashboard() {
         )}
       </section>
     </div>
+  );
+}
+
+const FEED_TEXT: Record<FeedStatus, string> = {
+  streaming: "LIVE",
+  polling: "LIVE",
+  connecting: "connecting",
+  offline: "offline",
+};
+
+/**
+ * Distinguishes a socket from a timer deliberately. Both are "live", but one
+ * ticks sub-second and the other every five seconds, and a trading interface
+ * that blurs the two is lying about its own latency.
+ */
+function LiveBadge({
+  status,
+  lastTick,
+}: {
+  status: FeedStatus;
+  lastTick: number | null;
+}) {
+  const on = status === "streaming" || status === "polling";
+  const colour = on ? "var(--up)" : status === "offline" ? "var(--down)" : "var(--faint)";
+
+  return (
+    <span
+      className="flex items-center gap-1.5 rounded border border-line px-2.5 py-1.5 font-mono text-[10px]"
+      style={{ color: colour }}
+      title={
+        status === "streaming"
+          ? "WebSocket — sub-second ticks"
+          : status === "polling"
+            ? "Polled every 5s — free forex feeds are not real-time"
+            : status
+      }
+    >
+      <span
+        className={`size-1.5 rounded-full ${on ? "live-dot" : ""}`}
+        style={{ background: colour }}
+      />
+      {FEED_TEXT[status]}
+      {on && (
+        <span className="text-faint">
+          {status === "streaming" ? "stream" : "5s"}
+        </span>
+      )}
+      {lastTick && on && <span className="sr-only">last tick {lastTick}</span>}
+    </span>
   );
 }

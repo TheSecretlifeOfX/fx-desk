@@ -35,7 +35,7 @@ export function Chart({
   ema21,
   digits,
   showBlocks,
-  livePrice,
+  liveBar,
 }: {
   candles: Candle[];
   orderBlocks: OrderBlock[];
@@ -43,7 +43,7 @@ export function Chart({
   ema21: (number | null)[];
   digits: number;
   showBlocks: boolean;
-  livePrice?: number;
+  liveBar?: { time: number; open: number; high: number; low: number; close: number } | null;
 }) {
   const holder = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -185,20 +185,29 @@ export function Chart({
     blocksRef.current?.setEnabled(showBlocks);
   }, [showBlocks]);
 
-  // ── Live price folds into the last candle ─────────────────────────
+  // ── The forming candle, updated on every tick ─────────────────────
+  //
+  // update() is the whole point: it mutates the last bar in place, or appends
+  // a new one when the timestamp advances past it. Calling setData here
+  // instead would rebuild the entire series on every tick and throw away the
+  // user's scroll position several times a second.
   useEffect(() => {
     const series = candleRef.current;
-    if (!series || livePrice === undefined || candles.length === 0) return;
+    if (!series || !liveBar || candles.length === 0) return;
 
-    const last = candles[candles.length - 1];
+    const lastClosed = candles[candles.length - 1];
+    // Never rewind: a stale tick arriving after a rollover would otherwise
+    // corrupt the series, which Lightweight Charts rejects outright.
+    if (liveBar.time < lastClosed.time) return;
+
     series.update({
-      time: last.time as UTCTimestamp,
-      open: last.open,
-      high: Math.max(last.high, livePrice),
-      low: Math.min(last.low, livePrice),
-      close: livePrice,
+      time: liveBar.time as UTCTimestamp,
+      open: liveBar.open,
+      high: liveBar.high,
+      low: liveBar.low,
+      close: liveBar.close,
     });
-  }, [livePrice, candles]);
+  }, [liveBar, candles]);
 
   return (
     <div

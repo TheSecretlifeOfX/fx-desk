@@ -22,10 +22,11 @@ Then open http://localhost:3002.
 
 ## What it does
 
-- **11 instruments** — 7 majors, 3 crosses, and gold
+- **15 instruments** — 7 majors, 3 crosses, gold, and 4 crypto pairs
 - **Interactive chart** — scroll to zoom, drag to pan, pinch on touch
 - **Five timeframes** — 5m, 15m, 1H, 4H, 1D
-- **Live prices**, polled every 20 seconds and folded into the forming candle
+- **A genuinely live chart** — the forming candle updates in place and rolls
+  over into a new one when the period ends
 - **Signal strength** from −100 to +100, with a separate confidence figure
 - **Order blocks** drawn as real zones that stay pinned to their prices while
   you scroll and zoom
@@ -37,7 +38,8 @@ from a serverless platform:
 
 | Provider | Data | Notes |
 | --- | --- | --- |
-| **Twelve Data** | Intraday OHLC, all timeframes | Primary. Needs a key for full coverage |
+| **Binance** | Intraday OHLC + **WebSocket stream** | Crypto only. No key, sub-second ticks |
+| **Twelve Data** | Intraday OHLC, all timeframes | Forex primary. Needs a key for full coverage |
 | **AwesomeAPI** | Daily OHLC | Refuses shared cloud IPs — works locally, not in production |
 | **ECB** (Frankfurter) | Daily close only | Last resort. No wicks, no gold |
 
@@ -57,6 +59,24 @@ TWELVEDATA_API_KEY=your_key_here
 ```
 
 The key is read on the server and never reaches the browser.
+
+### Why crypto streams and forex doesn't
+
+Real-time forex is licensed data — no free provider streams it, and any that
+claims to is serving you a delayed feed. So the two kinds of instrument get
+their live prices differently, and the interface says which is which rather
+than pretending they're the same:
+
+- **Crypto** opens a WebSocket straight from the browser to Binance's public
+  feed. Ticks arrive sub-second and each message carries the whole forming
+  candle. The badge reads `LIVE stream`.
+- **Forex** polls a lightweight endpoint every 5 seconds. The price genuinely
+  moves between polls, and the forming candle accumulates its high and low
+  from the ticks that arrive. The badge reads `LIVE 5s`.
+
+Both pause when the tab is hidden. The socket reconnects with exponential
+backoff capped at 20 seconds — hammering a public feed gets you banned, not
+connected.
 
 ### On TradingView
 

@@ -2,6 +2,7 @@ import type { Candle, Quote } from "./types";
 import { pairs, type PairDef } from "./pairs";
 import { fetchCandlesFallback, fetchQuotesFallback } from "./frankfurter";
 import { fetchIntraday, type Timeframe } from "./twelvedata";
+import { fetchKlines, isStreaming } from "./binance";
 
 /**
  * Every outbound request lives here and runs on the server.
@@ -150,9 +151,10 @@ export function errorStatus(err: unknown): number {
   return err instanceof UpstreamError ? err.status : 502;
 }
 
-export type DataSource = "twelvedata" | "awesomeapi" | "ecb";
+export type DataSource = "binance" | "twelvedata" | "awesomeapi" | "ecb";
 
 export const SOURCE_LABEL: Record<DataSource, string> = {
+  binance: "Binance · live stream",
   twelvedata: "Twelve Data · intraday OHLC",
   awesomeapi: "AwesomeAPI · daily OHLC",
   ecb: "ECB reference rates · daily close, no wicks",
@@ -171,6 +173,15 @@ export async function loadCandles(
   timeframe: Timeframe = "1h",
   limit = 200,
 ): Promise<{ candles: Candle[]; source: DataSource }> {
+  // Streaming instruments take their history from the same host that serves
+  // their WebSocket, so the candles and the live ticks agree exactly.
+  if (isStreaming(pair)) {
+    return {
+      candles: await fetchKlines(pair, timeframe, 500),
+      source: "binance",
+    };
+  }
+
   // Twelve Data first: it's the only source tested that serves intraday OHLC
   // to shared cloud IPs. The two below are daily-only and exist so the chart
   // still draws when it's unavailable or the symbol isn't covered.
