@@ -30,10 +30,10 @@ export default function RootLayout({
           </div>
         </header>
 
-        <main className="mx-auto max-w-7xl px-4 py-5">{children}</main>
+        <main className="mx-auto max-w-[1600px] px-4 py-5">{children}</main>
 
         <footer className="mt-8 border-t border-line">
-          <div className="mx-auto max-w-7xl space-y-2 px-4 py-6 text-[11px] leading-relaxed text-faint">
+          <div className="mx-auto max-w-[1600px] space-y-2 px-4 py-6 text-[11px] leading-relaxed text-faint">
             <p>
               <strong className="text-muted">Not financial advice.</strong>{" "}
               Signal scores are arithmetic on past prices and predict nothing.

@@ -22,6 +22,7 @@ export function Dashboard() {
   const [error, setError] = useState<string | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [timeframe, setTimeframe] = useState<Timeframe>("1h");
+  const [expanded, setExpanded] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 
   const previous = useRef<Record<string, number>>({});
@@ -113,7 +114,95 @@ export function Dashboard() {
     };
   }, []);
 
+  // F toggles fullscreen, Escape leaves it. Ignored while the user is typing
+  // so the shortcut can never swallow a keystroke meant for an input.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = document.activeElement;
+      const typing =
+        el instanceof HTMLElement &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.isContentEditable);
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+
+      if (e.key === "f" || e.key === "F") {
+        e.preventDefault();
+        setExpanded((v) => !v);
+      } else if (e.key === "Escape") {
+        setExpanded(false);
+      }
+    };
+
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  // Stop the page behind the overlay from scrolling.
+  useEffect(() => {
+    if (!expanded) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [expanded]);
+
   const pairDef = getPair(selected);
+
+  if (expanded && pairDef) {
+    return (
+      <div className="fixed inset-0 z-50 flex flex-col bg-bg">
+        <header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-2.5">
+          <div className="flex items-baseline gap-3">
+            <h1 className="font-mono text-lg font-semibold">{selected}</h1>
+            <span className="hidden text-xs text-muted sm:inline">
+              {pairDef.name}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <div
+              className="flex overflow-hidden rounded border border-line"
+              role="group"
+              aria-label="Timeframe"
+            >
+              {TIMEFRAMES.map((tf) => (
+                <button
+                  key={tf}
+                  type="button"
+                  onClick={() => setTimeframe(tf)}
+                  aria-pressed={timeframe === tf}
+                  className={`px-2.5 py-1.5 font-mono text-xs transition-colors ${
+                    timeframe === tf
+                      ? "bg-accent text-[#0b0e13]"
+                      : "text-muted hover:bg-panel-2"
+                  }`}
+                >
+                  {TIMEFRAME_LABEL[tf]}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setExpanded(false)}
+              className="flex items-center gap-2 rounded border border-line px-3 py-1.5 font-mono text-xs text-muted transition-colors hover:border-accent hover:text-accent"
+            >
+              Exit
+              <kbd className="rounded border border-line px-1 text-[10px]">
+                Esc
+              </kbd>
+            </button>
+          </div>
+        </header>
+
+        <div className="min-h-0 flex-1">
+          <TradingViewChart pair={pairDef} timeframe={timeframe} expanded />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="grid gap-4 lg:grid-cols-[290px_minmax(0,1fr)]">
@@ -222,6 +311,19 @@ export function Dashboard() {
                 <span className="text-faint">TradingView</span>
               </span>
 
+              <button
+                type="button"
+                onClick={() => setExpanded(true)}
+                className="flex items-center gap-2 rounded border border-line px-3 py-1.5 font-mono text-xs text-muted transition-colors hover:border-accent hover:text-accent"
+                title="Expand the chart to fill the window"
+              >
+                <ExpandIcon />
+                Fullscreen
+                <kbd className="rounded border border-line px-1 text-[10px]">
+                  F
+                </kbd>
+              </button>
+
               <div
                 className="flex overflow-hidden rounded border border-line"
                 role="group"
@@ -249,8 +351,10 @@ export function Dashboard() {
           {pairDef && <TradingViewChart pair={pairDef} timeframe={timeframe} />}
 
           <p className="mt-3 border-t border-line pt-3 font-mono text-[11px] text-faint">
-            Live chart and prices by TradingView. Use the left toolbar to draw
-            your own zones, or add indicators from the top bar.
+            Live chart and prices by TradingView. Press{" "}
+            <kbd className="rounded border border-line px-1">F</kbd> for
+            fullscreen. Use the left toolbar to draw your own zones, or add
+            indicators from the top bar.
           </p>
         </div>
 
@@ -297,5 +401,22 @@ export function Dashboard() {
         )}
       </section>
     </div>
+  );
+}
+
+function ExpandIcon() {
+  return (
+    <svg
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="size-3.5"
+      aria-hidden="true"
+    >
+      <path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4" />
+    </svg>
   );
 }

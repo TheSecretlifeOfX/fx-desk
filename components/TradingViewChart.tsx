@@ -12,9 +12,12 @@ import type { Timeframe } from "@/lib/twelvedata";
  * their full toolset: drawing tools, indicators, replay, and every timeframe
  * they support.
  *
- * The widget renders into an iframe it creates itself, so nothing outside it
- * can draw on top. Changing symbol or interval means tearing the whole thing
- * down and building a new one; there's no imperative API to update in place.
+ * The widget renders into an iframe it creates itself and exposes no
+ * imperative API, so any change — symbol, interval, or the container being
+ * resized into fullscreen — means tearing it down and building a new one.
+ * `expanded` is in the dependency list for exactly that reason: the iframe
+ * sizes itself on creation, and remounting is the only reliable way to make
+ * it fill a container that just changed shape.
  */
 
 const INTERVAL: Record<Timeframe, string> = {
@@ -31,9 +34,11 @@ const SCRIPT_SRC =
 export function TradingViewChart({
   pair,
   timeframe,
+  expanded = false,
 }: {
   pair: PairDef;
   timeframe: Timeframe;
+  expanded?: boolean;
 }) {
   const holder = useRef<HTMLDivElement>(null);
 
@@ -76,13 +81,16 @@ export function TradingViewChart({
     return () => {
       el.innerHTML = "";
     };
-  }, [pair.tvSymbol, timeframe]);
+  }, [pair.tvSymbol, timeframe, expanded]);
 
   return (
     <div
       ref={holder}
-      key={`${pair.tvSymbol}-${timeframe}`}
-      className="tradingview-widget-container h-[520px] w-full"
+      className={
+        expanded
+          ? "tradingview-widget-container h-full w-full"
+          : "tradingview-widget-container h-[clamp(460px,68vh,900px)] w-full"
+      }
     />
   );
 }
