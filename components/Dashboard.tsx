@@ -88,24 +88,57 @@ export function Dashboard() {
     };
   }, [selected, timeframe]);
 
-  // Backfill the watchlist's signal column one instrument at a time, so we
-  // don't fire fifteen requests at the provider simultaneously.
+  // Backfill the watchlist's signal column.
+  //
+  // Twelve Data's free tier allows 8 requests a minute, so the forex pairs
+  // are spaced accordingly — firing them off back to back returns nothing but
+  // 429s and leaves most of the column blank. The crypto pairs come from
+  // Binance, which has no such limit, so they go first and fill the board
+  // while the rest trickle in. Responses cache at the edge, so this cost is
+  // paid once rather than per visitor.
   useEffect(() => {
     let cancelled = false;
 
+    const FOREX_GAP_MS = 8_000;
+    const CRYPTO_GAP_MS = 300;
+
+    const load = async (id: string) => {
+      try {
+        const res = await fetch(`/api/candles/${id}`);
+        if (!res.ok) return false;
+        const data: PairAnalysis = await res.json();
+        if (cancelled) return true;
+        setScores((prev) => ({ ...prev, [data.pair]: data.signal.score }));
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
     (async () => {
-      for (const p of pairs) {
+      // Cheap ones first, so the column isn't empty while we wait.
+      const streaming = pairs.filter((p) => p.live === "stream");
+      const polled = pairs.filter((p) => p.live !== "stream");
+
+      for (const p of streaming) {
         if (cancelled) return;
-        try {
-          const res = await fetch(`/api/candles/${p.id}`);
-          if (!res.ok) continue;
-          const data: PairAnalysis = await res.json();
-          if (cancelled) return;
-          setScores((s) => ({ ...s, [data.pair]: data.signal.score }));
-        } catch {
-          // A missing signal just leaves that row's bar blank.
-        }
-        await new Promise((r) => setTimeout(r, 220));
+        await load(p.id);
+        await wait(CRYPTO_GAP_MS);
+      }
+
+      const failed: string[] = [];
+      for (const p of polled) {
+        if (cancelled) return;
+        const ok = await load(p.id);
+        if (!ok) failed.push(p.id);
+        await wait(FOREX_GAP_MS);
+      }
+
+      // One retry pass — a single 429 shouldn't leave a row blank forever.
+      for (const id of failed) {
+        if (cancelled) return;
+        await load(id);
+        await wait(FOREX_GAP_MS);
       }
     })();
 
@@ -419,4 +452,8 @@ function ExpandIcon() {
       <path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4" />
     </svg>
   );
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

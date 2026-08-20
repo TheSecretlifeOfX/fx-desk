@@ -74,8 +74,10 @@ export async function fetchIntraday(
 
   const res = await fetch(url, {
     headers: { Accept: "application/json" },
-    // Intraday bars go stale quickly; daily ones don't.
-    next: { revalidate: timeframe === "1day" ? 900 : 120 },
+    // Cached longer than you'd want for a trading terminal, deliberately:
+    // the free tier allows 8 requests a minute across every instrument, so
+    // cache hits are what keep the watchlist populated at all.
+    next: { revalidate: timeframe === "1day" ? 900 : 300 },
   });
 
   if (!res.ok) {
