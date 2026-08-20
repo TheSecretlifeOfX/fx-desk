@@ -4,7 +4,6 @@ import { errorStatus, loadCandles, SOURCE_LABEL } from "@/lib/source";
 import { isTimeframe, type Timeframe } from "@/lib/twelvedata";
 import { atr, ema, rsi } from "@/lib/indicators";
 import { computeSignal } from "@/lib/signal";
-import { findOrderBlocks } from "@/lib/orderBlocks";
 import type { PairAnalysis } from "@/lib/types";
 
 export const revalidate = 900;
@@ -33,7 +32,6 @@ export async function GET(
       name: pair.name,
       candles,
       signal: computeSignal(candles),
-      orderBlocks: findOrderBlocks(candles),
       indicators: {
         ema9: ema(closes, 9),
         ema21: ema(closes, 21),

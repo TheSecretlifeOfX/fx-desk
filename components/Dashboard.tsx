@@ -3,13 +3,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { pairs, getPair } from "@/lib/pairs";
 import type { PairAnalysis, Quote } from "@/lib/types";
-import { Chart } from "./Chart";
-import { SignalBar, SignalPanel, biasColour } from "./SignalGauge";
-import { BIAS_LABEL } from "@/lib/signal";
-import { TIMEFRAMES, TIMEFRAME_LABEL, type Timeframe } from "@/lib/twelvedata";
-import { useLiveFeed, type LiveBar, type FeedStatus } from "./useLiveFeed";
+import { TradingViewChart } from "./TradingViewChart";
+import { SignalBar, SignalPanel } from "./SignalGauge";
+import {
+  TIMEFRAMES,
+  TIMEFRAME_LABEL,
+  type Timeframe,
+} from "@/lib/twelvedata";
 
-const QUOTE_REFRESH_MS = 20_000;
+const QUOTE_REFRESH_MS = 15_000;
 
 export function Dashboard() {
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
@@ -19,13 +21,12 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
-  const [showBlocks, setShowBlocks] = useState(true);
   const [timeframe, setTimeframe] = useState<Timeframe>("1h");
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
 
   const previous = useRef<Record<string, number>>({});
 
-  // ── Live quotes, polled ────────────────────────────────────────────
+  // ── Watchlist prices ──────────────────────────────────────────────
   const loadQuotes = useCallback(async () => {
     try {
       const res = await fetch("/api/pairs");
@@ -54,7 +55,10 @@ export function Dashboard() {
     return () => clearInterval(id);
   }, [loadQuotes]);
 
-  // ── Analysis for the selected pair ─────────────────────────────────
+  // ── Signal analysis for the selected instrument ───────────────────
+  //
+  // The chart is TradingView's and fetches its own prices; this call exists
+  // only to compute the signal, which is ours.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -63,7 +67,7 @@ export function Dashboard() {
     fetch(`/api/candles/${selected}?tf=${timeframe}`)
       .then(async (res) => {
         const body = await res.json();
-        if (!res.ok) throw new Error(body.error ?? "Could not load chart");
+        if (!res.ok) throw new Error(body.error ?? "Could not load analysis");
         return body as PairAnalysis;
       })
       .then((data) => {
@@ -83,15 +87,14 @@ export function Dashboard() {
     };
   }, [selected, timeframe]);
 
-  // Fill in the watchlist's signal column in the background, one pair at a
-  // time so we don't fire eleven requests at the upstream simultaneously.
+  // Backfill the watchlist's signal column one instrument at a time, so we
+  // don't fire fifteen requests at the provider simultaneously.
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       for (const p of pairs) {
         if (cancelled) return;
-        if (scores[p.id] !== undefined) continue;
         try {
           const res = await fetch(`/api/candles/${p.id}`);
           if (!res.ok) continue;
@@ -99,7 +102,7 @@ export function Dashboard() {
           if (cancelled) return;
           setScores((s) => ({ ...s, [data.pair]: data.signal.score }));
         } catch {
-          // A missing signal just leaves that row blank.
+          // A missing signal just leaves that row's bar blank.
         }
         await new Promise((r) => setTimeout(r, 220));
       }
@@ -108,31 +111,13 @@ export function Dashboard() {
     return () => {
       cancelled = true;
     };
-    // Intentionally runs once — `scores` is read, not depended on.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const pairDef = getPair(selected);
-  const quote = quotes[selected];
-
-  // The forming candle starts as a copy of the last closed one, then the feed
-  // takes over and mutates it on every tick.
-  const seed: LiveBar | null = analysis?.candles.length
-    ? { ...analysis.candles[analysis.candles.length - 1] }
-    : null;
-
-  const { bar: liveBar, status: feedStatus, lastTick } = useLiveFeed(
-    pairDef,
-    timeframe,
-    seed,
-  );
-
-  // Streaming instruments carry no REST quote; take the price off the tick.
-  const livePrice = liveBar?.close ?? quote?.bid;
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[300px_minmax(0,1fr)]">
-      {/* ── Watchlist ─────────────────────────────────────────────── */}
+    <div className="grid gap-4 lg:grid-cols-[290px_minmax(0,1fr)]">
+      {/* ── Watchlist ───────────────────────────────────────────── */}
       <aside className="rounded-lg border border-line bg-panel">
         <header className="flex items-center justify-between border-b border-line px-4 py-3">
           <h2 className="text-sm font-medium">Watchlist</h2>
@@ -150,7 +135,7 @@ export function Dashboard() {
           </p>
         )}
 
-        <ul className="max-h-[520px] overflow-y-auto">
+        <ul className="max-h-[560px] overflow-y-auto">
           {pairs.map((p) => {
             const q = quotes[p.id];
             const score = scores[p.id];
@@ -221,7 +206,7 @@ export function Dashboard() {
         </ul>
       </aside>
 
-      {/* ── Chart + signal ────────────────────────────────────────── */}
+      {/* ── Chart + signal ──────────────────────────────────────── */}
       <section className="space-y-4">
         <div className="rounded-lg border border-line bg-panel p-4">
           <header className="mb-4 flex flex-wrap items-start justify-between gap-4">
@@ -230,50 +215,18 @@ export function Dashboard() {
               <p className="text-xs text-muted">{pairDef?.name}</p>
             </div>
 
-            <div className="flex items-center gap-4">
-              {livePrice !== undefined && (
-                <div className="text-right">
-                  <p className="font-mono text-xl tabular-nums">
-                    {livePrice.toFixed(pairDef?.digits ?? 5)}
-                  </p>
-                  {liveBar ? (
-                    <p
-                      className="font-mono text-xs tabular-nums"
-                      style={{
-                        color:
-                          liveBar.close >= liveBar.open
-                            ? "var(--up)"
-                            : "var(--down)",
-                      }}
-                    >
-                      {liveBar.close >= liveBar.open ? "+" : ""}
-                      {(liveBar.close - liveBar.open).toFixed(
-                        pairDef?.digits ?? 5,
-                      )}{" "}
-                      this candle
-                    </p>
-                  ) : (
-                    quote && (
-                      <p
-                        className="font-mono text-xs tabular-nums"
-                        style={{
-                          color:
-                            quote.changePercent >= 0
-                              ? "var(--up)"
-                              : "var(--down)",
-                        }}
-                      >
-                        {quote.changePercent >= 0 ? "+" : ""}
-                        {quote.changePercent.toFixed(2)}%
-                      </p>
-                    )
-                  )}
-                </div>
-              )}
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="flex items-center gap-1.5 rounded border border-line px-2.5 py-1.5 font-mono text-[10px] text-up">
+                <span className="live-dot size-1.5 rounded-full bg-up" />
+                LIVE
+                <span className="text-faint">TradingView</span>
+              </span>
 
-              <LiveBadge status={feedStatus} lastTick={lastTick} />
-
-              <div className="flex overflow-hidden rounded border border-line" role="group" aria-label="Timeframe">
+              <div
+                className="flex overflow-hidden rounded border border-line"
+                role="group"
+                aria-label="Timeframe"
+              >
                 {TIMEFRAMES.map((tf) => (
                   <button
                     key={tf}
@@ -290,189 +243,59 @@ export function Dashboard() {
                   </button>
                 ))}
               </div>
-
-              <label className="flex cursor-pointer items-center gap-2 rounded border border-line px-3 py-1.5 text-xs">
-                <input
-                  type="checkbox"
-                  checked={showBlocks}
-                  onChange={(e) => setShowBlocks(e.target.checked)}
-                  className="accent-[var(--accent)]"
-                />
-                Order blocks
-              </label>
             </div>
           </header>
 
-          {loading && (
-            <div className="flex h-[460px] items-center justify-center text-sm text-muted">
-              Loading {selected}…
-            </div>
-          )}
+          {pairDef && <TradingViewChart pair={pairDef} timeframe={timeframe} />}
 
-          {error && !loading && (
-            <div className="flex h-[460px] flex-col items-center justify-center gap-3 text-center">
-              <p className="text-sm text-down">{error}</p>
-              <button
-                type="button"
-                onClick={() => setSelected((s) => s)}
-                className="rounded border border-line px-3 py-1.5 text-xs hover:border-accent"
-              >
-                Retry
-              </button>
-            </div>
-          )}
-
-          {analysis && !loading && !error && (
-            <>
-              <Chart
-                candles={analysis.candles}
-                orderBlocks={analysis.orderBlocks}
-                ema9={analysis.indicators.ema9}
-                ema21={analysis.indicators.ema21}
-                digits={pairDef?.digits ?? 5}
-                showBlocks={showBlocks}
-                liveBar={liveBar}
-              />
-              <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-1 border-t border-line pt-3 font-mono text-[11px] text-faint">
-                <li className="text-muted">{analysis.sourceLabel}</li>
-                <li>scroll to zoom · drag to pan</li>
-                <li>
-                  <span className="mr-1.5 inline-block h-0.5 w-3 align-middle bg-[var(--ema-fast)]" />
-                  EMA 9
-                </li>
-                <li>
-                  <span className="mr-1.5 inline-block h-0.5 w-3 align-middle bg-[var(--ema-slow)]" />
-                  EMA 21
-                </li>
-                <li>
-                  <span className="mr-1.5 inline-block size-2 align-middle bg-[var(--up)] opacity-40" />
-                  Bullish block
-                </li>
-                <li>
-                  <span className="mr-1.5 inline-block size-2 align-middle bg-[var(--down)] opacity-40" />
-                  Bearish block
-                </li>
-                <li>dashed = mitigated</li>
-              </ul>
-            </>
-          )}
+          <p className="mt-3 border-t border-line pt-3 font-mono text-[11px] text-faint">
+            Live chart and prices by TradingView. Use the left toolbar to draw
+            your own zones, or add indicators from the top bar.
+          </p>
         </div>
+
+        {loading && (
+          <div className="rounded-lg border border-line bg-panel p-4 text-sm text-muted">
+            Loading signal for {selected}…
+          </div>
+        )}
+
+        {error && !loading && (
+          <div className="rounded-lg border border-line bg-panel p-4">
+            <p className="text-sm text-down">{error}</p>
+            <p className="mt-1 text-xs text-faint">
+              The chart above is unaffected — it takes its prices from
+              TradingView.
+            </p>
+          </div>
+        )}
 
         {analysis && !loading && !error && (
           <div className="grid gap-4 sm:grid-cols-2">
             <SignalPanel signal={analysis.signal} />
 
             <div className="rounded-lg border border-line bg-panel p-4">
-              <div className="mb-3 flex items-baseline justify-between">
-                <h2 className="text-sm font-medium text-muted">Order blocks</h2>
-                <span className="font-mono text-xs text-faint">
-                  {analysis.orderBlocks.length} found
-                </span>
-              </div>
-
-              {analysis.orderBlocks.length === 0 ? (
-                <p className="text-xs text-faint">
-                  No qualifying zones in this window. A block needs an
-                  impulsive move of at least 1.6× ATR that breaks the origin
-                  candle&rsquo;s range.
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {[...analysis.orderBlocks]
-                    .sort((a, b) => b.index - a.index)
-                    .map((b) => (
-                      <li
-                        key={`${b.kind}-${b.index}`}
-                        className="flex items-center justify-between gap-3 rounded border border-line bg-panel-2 px-3 py-2"
-                      >
-                        <div>
-                          <p
-                            className="text-xs font-medium capitalize"
-                            style={{
-                              color:
-                                b.kind === "bullish"
-                                  ? "var(--up)"
-                                  : "var(--down)",
-                            }}
-                          >
-                            {b.kind}
-                            {b.mitigated && (
-                              <span className="ml-1.5 font-normal text-faint">
-                                mitigated
-                              </span>
-                            )}
-                          </p>
-                          <p className="font-mono text-[11px] text-faint">
-                            {new Date(b.time * 1000).toLocaleDateString(
-                              "en-GB",
-                              { day: "2-digit", month: "short", timeZone: "UTC" },
-                            )}
-                          </p>
-                        </div>
-                        <div className="text-right font-mono text-[11px]">
-                          <p className="text-muted">
-                            {b.bottom.toFixed(pairDef?.digits ?? 5)} –{" "}
-                            {b.top.toFixed(pairDef?.digits ?? 5)}
-                          </p>
-                          <p className="text-faint">{b.strength}× ATR</p>
-                        </div>
-                      </li>
-                    ))}
-                </ul>
-              )}
+              <h2 className="mb-3 text-sm font-medium text-muted">
+                How this score is built
+              </h2>
+              <p className="mb-3 text-xs leading-relaxed text-faint">
+                Four readings of the last {analysis.candles.length} candles on
+                the {TIMEFRAME_LABEL[timeframe]} timeframe, each normalised to
+                −100…100 and weighted: trend 35%, RSI 25%, momentum 25%, range
+                position 15%.
+              </p>
+              <p className="mb-3 text-xs leading-relaxed text-faint">
+                Confidence is separate from the score — it measures how much the
+                four components agree, so a +40 backed by all of them reads
+                differently from a +40 dragged up by one extreme reading.
+              </p>
+              <p className="font-mono text-[11px] text-faint">
+                Analysis data: {analysis.sourceLabel}
+              </p>
             </div>
           </div>
         )}
       </section>
     </div>
-  );
-}
-
-const FEED_TEXT: Record<FeedStatus, string> = {
-  streaming: "LIVE",
-  polling: "LIVE",
-  connecting: "connecting",
-  offline: "offline",
-};
-
-/**
- * Distinguishes a socket from a timer deliberately. Both are "live", but one
- * ticks sub-second and the other every five seconds, and a trading interface
- * that blurs the two is lying about its own latency.
- */
-function LiveBadge({
-  status,
-  lastTick,
-}: {
-  status: FeedStatus;
-  lastTick: number | null;
-}) {
-  const on = status === "streaming" || status === "polling";
-  const colour = on ? "var(--up)" : status === "offline" ? "var(--down)" : "var(--faint)";
-
-  return (
-    <span
-      className="flex items-center gap-1.5 rounded border border-line px-2.5 py-1.5 font-mono text-[10px]"
-      style={{ color: colour }}
-      title={
-        status === "streaming"
-          ? "WebSocket — sub-second ticks"
-          : status === "polling"
-            ? "Polled every 5s — free forex feeds are not real-time"
-            : status
-      }
-    >
-      <span
-        className={`size-1.5 rounded-full ${on ? "live-dot" : ""}`}
-        style={{ background: colour }}
-      />
-      {FEED_TEXT[status]}
-      {on && (
-        <span className="text-faint">
-          {status === "streaming" ? "stream" : "5s"}
-        </span>
-      )}
-      {lastTick && on && <span className="sr-only">last tick {lastTick}</span>}
-    </span>
   );
 }

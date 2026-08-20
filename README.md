@@ -2,13 +2,12 @@
 
 **Live demo → [fx-desk-live.vercel.app](https://fx-desk-live.vercel.app)**
 
-Forex prices with a composite signal-strength score and automatically detected
-order blocks drawn on the chart. Built with Next.js 15, TypeScript and
-Tailwind CSS.
+A market dashboard: live TradingView charts for 15 instruments, alongside a
+composite signal-strength score computed from the price history. Built with
+Next.js 15, TypeScript and Tailwind CSS.
 
 > **Not financial advice.** Signal scores are arithmetic on past prices — they
-> predict nothing. Order blocks are a charting convention, not a fact about the
-> market. This is a demonstration of data fetching, charting and algorithm
+> predict nothing. This is a demonstration of data fetching and algorithm
 > design. Do not trade from it.
 
 ## Running it
@@ -23,13 +22,11 @@ Then open http://localhost:3002.
 ## What it does
 
 - **15 instruments** — 7 majors, 3 crosses, gold, and 4 crypto pairs
-- **Interactive chart** — scroll to zoom, drag to pan, pinch on touch
+- **Live TradingView charts** — their official widget, so the prices, drawing
+  tools, indicators and replay are all theirs
 - **Five timeframes** — 5m, 15m, 1H, 4H, 1D
-- **A genuinely live chart** — the forming candle updates in place and rolls
-  over into a new one when the period ends
 - **Signal strength** from −100 to +100, with a separate confidence figure
-- **Order blocks** drawn as real zones that stay pinned to their prices while
-  you scroll and zoom
+- **Live watchlist** with per-instrument signal bars
 
 ## Data
 
@@ -80,13 +77,22 @@ connected.
 
 ### On TradingView
 
-The chart is built with **[Lightweight Charts](https://github.com/tradingview/lightweight-charts)**,
-TradingView's open-source charting library (Apache-2.0). The *data* is not
-TradingView's: they have no public data API, their feed is exchange-licensed,
-and scraping it would breach their terms. Their embeddable widget does carry
-real TradingView data, but it's an iframe — custom order blocks can't be drawn
-on it. Since drawing the zones was the point, this uses their renderer with
-independent data.
+The chart is TradingView's official **Advanced Real-Time Chart** widget, so
+the prices on it are their own live feed rather than anything fetched here.
+That brings their full toolset with it — drawing tools, indicators, replay —
+and it means the chart keeps working regardless of what the data providers
+below are doing.
+
+The trade-off is that the widget renders inside an iframe, so nothing outside
+it can draw on it. An earlier version used TradingView's open-source
+[Lightweight Charts](https://github.com/tradingview/lightweight-charts)
+library with independently fetched data in order to render custom order-block
+zones; that's in the git history if you want to compare. Real TradingView
+data and custom overlays are mutually exclusive, and this version chooses the
+data.
+
+The providers below are still used, but only to compute the signal — not to
+draw the chart.
 
 ## How the signal works
 
@@ -111,35 +117,16 @@ components *agree*. A +40 where everything points the same way is a different
 proposition from a +40 produced by one extreme reading dragging three flat
 ones along. Both appear on screen.
 
-## How order block detection works
-
-An order block is the last opposing candle before an impulsive move. Detection
-requires three things:
-
-1. The origin candle closes **against** the move that follows it
-2. The following move travels at least **1.6× ATR** within 5 candles
-3. The move **breaks structure** — it takes out the origin candle's extreme
-   and a later candle *closes* beyond it, rather than merely wicking through
-
-Measuring impulse in ATR rather than pips is what lets identical thresholds
-work on EURUSD (ATR ≈ 0.0034) and gold (ATR ≈ 103) without hand-tuning.
-
-Zones shorter than 0.2× ATR are discarded — a doji origin candle produces a
-technically valid but useless sub-pip band that renders as a hairline. A block
-is marked **mitigated** once price has traded back into its range, drawn with
-a dashed border and reduced opacity.
-
 ## Architecture
 
 ```
 app/
   api/pairs/route.ts          live quotes for all instruments
-  api/candles/[pair]/route.ts candles + indicators + signal + blocks
+  api/candles/[pair]/route.ts candles + indicators + signal
   page.tsx                    dashboard
 components/
   Dashboard.tsx               state, polling, selection
-  Chart.tsx                   Lightweight Charts setup, live updates
-  OrderBlockPrimitive.ts      custom canvas primitive drawing the zones
+  TradingViewChart.tsx        the embedded widget
   SignalGauge.tsx             score bar and component breakdown
 lib/
   source.ts                   provider chain and failover
@@ -147,7 +134,6 @@ lib/
   frankfurter.ts              ECB reference rates (fallback)
   indicators.ts               EMA, Wilder's RSI, ATR, momentum
   signal.ts                   composite scoring
-  orderBlocks.ts              detection
   pairs.ts                    instrument definitions
 ```
 
@@ -155,18 +141,6 @@ lib/
 API key stays on the server, responses are cached on our terms, and the shape
 the client sees is ours — which is why adding a third provider touched one
 file.
-
-**Order blocks are a chart primitive, not an overlay.** Lightweight Charts has
-no rectangle shape, so `components/OrderBlockPrimitive.ts` implements its
-series-primitive interface: every frame, each zone's price range and origin
-time are re-projected into pixels through the chart's own scales. That's why
-the zones stay locked to their prices while you scroll and zoom, instead of
-drifting the way a static overlay would.
-
-**The chart instance is created once** and driven imperatively — `setData` for
-history, `update` for live ticks. React never re-renders it, which is the
-difference between a chart that ticks smoothly and one that rebuilds itself
-twice a minute.
 
 ## Known limitations
 

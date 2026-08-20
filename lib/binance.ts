@@ -71,8 +71,3 @@ export async function fetchKlines(
   return candles;
 }
 
-/** The browser subscribes here directly — no proxy, so ticks aren't delayed. */
-export function streamUrl(pair: PairDef, timeframe: Timeframe): string | null {
-  if (!isStreaming(pair)) return null;
-  return `wss://data-stream.binance.vision/ws/${pair.stream}@kline_${INTERVAL[timeframe]}`;
-}

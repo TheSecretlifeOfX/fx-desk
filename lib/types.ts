@@ -36,26 +36,11 @@ export type Signal = {
   }[];
 };
 
-export type OrderBlock = {
-  kind: "bullish" | "bearish";
-  /** Index of the origin candle in the series. */
-  index: number;
-  time: number;
-  /** Zone boundaries. */
-  top: number;
-  bottom: number;
-  /** Size of the impulsive move that followed, in ATR multiples. */
-  strength: number;
-  /** True once price has traded back into the zone. */
-  mitigated: boolean;
-};
-
 export type PairAnalysis = {
   pair: string;
   name: string;
   candles: Candle[];
   signal: Signal;
-  orderBlocks: OrderBlock[];
   indicators: {
     ema9: (number | null)[];
     ema21: (number | null)[];
